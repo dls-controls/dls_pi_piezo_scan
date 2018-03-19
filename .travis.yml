@@ -4,9 +4,10 @@ python:
 
 install:
 - pip install coveralls
+- pip install coverage
 
 
-script: python dls_pi_piezo_scan/test_dls_pi_piezo_scan.py
+script: coverage run dls_pi_piezo_scan/test_dls_pi_piezo_scan.py
 
 after_success:
 - coveralls
