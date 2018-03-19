@@ -2,7 +2,7 @@ language: python
 python:
 - "2.7"
 
-script: python tests/test.py
+script: python dls_pi_piezo_scan/test_dls_pi_piezo_scan.py
 
 after_success:
 - coveralls

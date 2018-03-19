@@ -4,10 +4,9 @@ import unittest
 import dls_pi_piezo_scan
 
 class TestParser(unittest.TestCase):
-    def test_ab(self):
-        a = 1
-        b = 1
-        self.assertEqual(a, b, "a should equal b")
+    def test_true(self):
+        cond = dls_pi_piezo_scan.return_true()
+        self.assertEqual(cond, True, "should return true")
         
 if __name__ == "__main__":
     unittest.main()
