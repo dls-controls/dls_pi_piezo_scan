@@ -1,0 +1,1 @@
+[![Build Status](https://travis-ci.org/dls-controls/dls_pi_piezo_scan.svg?branch=master)](https://travis-ci.org/dls-controls/dls_pi_piezo_scan)
