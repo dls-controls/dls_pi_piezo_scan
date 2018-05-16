@@ -30,10 +30,8 @@ class PIController():
         self.stop_commands = ""
         self.load_command_templates()
 
-        # Prepare stop commands so they are always ready to go
+        # Prepare stop commands so they are always ready to go, since they never change
         self.prepare_stop_commands()
-
-
 
     def create_records(self):
         # Start the scan
@@ -129,6 +127,7 @@ class PIController():
             print "DEBUG SEND %s" % command
 
     def send_multiline(self, multiline_input):
+        """Send a multiline string of commands line by line"""
         for line in multiline_input.split("\n"):
             print "Send " + line.strip()
             self.send(line.strip() + "\n")
@@ -159,6 +158,7 @@ class PIController():
         self.socket.close()
 
     def load_command_templates(self):
+        """Makes the command templates accessible"""
 
         self.templates = {}
 
@@ -246,6 +246,7 @@ class PIController():
             self.stop_commands += command
 
     def start_scan(self, value):
+        """Sets up and starts a scan"""
         self.records["scan_talking"].set(1)
         self.prepare_setup_commands()
         self.prepare_start_commands()
@@ -257,6 +258,7 @@ class PIController():
 
 
     def prepare_setup_commands(self):
+        """Prepares the setup commands with the current scan parameters"""
 
         # Start creating a row...
         # Add x steps forwards
@@ -301,10 +303,13 @@ class PIController():
         self.add(self.templates["rest"].format(**self.params))
 
     def prepare_start_commands(self):
-        # Start commands
+        """Prepare the commands that will start the scan"""
+
         self.add("""WGO 1 257 2 257""", command_type="start")
 
     def prepare_stop_commands(self):
+        """Prepare the commands that will stop the scan"""
+
         self.add(self.templates["stop_commands"], command_type="stop")
 
     def send_setup_commands(self):
@@ -319,7 +324,8 @@ class PIController():
         return status
 
     def send_start_commands(self):
-        """Send down the start commands which actually triggers the start of the scan"""
+        """Send down the start commands
+        This will actually triggers the start of the scan"""
 
         print "Sending start commands"
         start = time.time()
@@ -328,12 +334,14 @@ class PIController():
         print "elapsed time: %f s" % (end - start)
         self.records["scan_talking"].set(0)
 
+    def abort_scan(self, value=None):
+        """Wrapper to be used as callback for abort record"""
+        self.send_stop_commands()
 
-def abort_scan(self,value):
-    stop_commands = """WGO 1 0 2 0
-            STP"""
-    print "Sending stop commands"
-    start = time.time()
-    self.send_multiline(stop_commands)
-    end = time.time()
-    print "elapsed time: %f s" % (end - start)
+    def send_stop_commands(self):
+
+        print "Sending stop commands"
+        start = time.time()
+        self.send_multiline(self.stop_commands)
+        end = time.time()
+        print "elapsed time: %f s" % (end - start)
