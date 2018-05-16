@@ -21,7 +21,7 @@ if __name__ == '__main__':
     # Terminal server
     # pi_controller = PIController("172.23.82.5", 4011)
     # Ethernet
-    pi_controller = PIController.PIController("172.23.82.249", 50000, debug=False)
+    pi_controller = PIController.PIController("172.23.82.249", 50000, debug=True)
 
     # Start IOC
     builder.LoadDatabase()
