@@ -9,28 +9,43 @@ from softioc import softioc, builder
 
 class PIController():
     def __init__(self, host, port=50000, debug=False):
+        # Debug flag causes us to not actually connect
+        # and print out commands instead
         self.debug = debug
 
+        # Set up connection to controller
         self.host = host
         self.port = port
-
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.settimeout(1.0) # seconds
         self.connect()
 
+        # Create our records
         self.records = {}
         self.create_records()
+
+        # Prepare command templates
+        self.setup_commands = ""
+        self.start_commands = ""
+        self.stop_commands = ""
+        self.load_command_templates()
+
+        # Prepare stop commands so they are always ready to go
+        self.prepare_stop_commands()
+
+
 
     def create_records(self):
         # Start the scan
         self.records["start_scan"] = builder.mbbOut('START',
-                                               initial_value=0,
-                                               PINI='NO',
-                                               NOBT=2,
-                                               ZRVL=0, ZRST='Stop',
-                                               ONVL=1, ONST='Go',
-                                               on_update=self.start_scan,
-                                               always_update=True)
+                                           initial_value=0,
+                                           PINI='NO',
+                                           NOBT=2,
+                                           ZRVL=0, ZRST='Stop',
+                                           ONVL=1, ONST='Go',
+                                           on_update=self.start_scan,
+                                           always_update=True)
+
         # Status to say we're sending commands
         self.records["scan_talking"] = builder.mbbIn("TALKING",
                                                 initial_value=0,
@@ -98,6 +113,7 @@ class PIController():
                                                 EGU="ms", PREC=1)
 
 
+
     def connect(self):
         """Connect socket to controller"""
         if not self.debug:
@@ -162,25 +178,36 @@ class PIController():
                 WAV {TABLEY:d} & LIN {yMOVETIME:d} 0 {y1:f} {yMOVETIME:d} 0 0
         """
 
+        # Set up data recording,
+        # Move to start poisition
+        self.templates["rest"] = """WTR 0 20 1
+                RTR 40
+                WSL 1 1
+                WSL 2 2
+                WGC 1 {Y_CYCLES:d}
+                TWC
+                DRC 1 1 2
+                DRC 2 2 2
+                DRC 3 3 2
+                DRC 4 1 1
+                DRC 5 2 1
+                DRC 6 3 1
+                WOS 1 0
+                WOS 2 0
+                MOV 1 10
+                MOV 2 10
+                MOV 3 10
+                WOS 1 10
+                WOS 2 10"""
+
+        self.templates["stop_commands"] = """WGO 1 0 2 0
+            STP"""
+
     def get_scan_parameters(self):
         """Gather the parameters for the scan and populate a dict for use in
         building commands"""
 
         # Scan parameters
-        # Number of points
-        NX          = self.records["NX"].get()
-        NY          = self.records["NY"].get()
-
-        # Step size
-        DX          = self.records["DX"].get()
-        DY          = self.records["DY"].get()
-
-        # Starting point
-        X0          = self.records["X0"].get()
-        Y0          = self.records["Y0"].get()
-        Z0          = self.records["Z0"].get()
-        EXPOSURE    = self.records["EXPOSURE"].get()
-        MOVETIME    = self.records["MOVETIME"].get()  # Magic number
 
         # Which wave table for which axis
         TABLEX = 1
@@ -194,111 +221,105 @@ class PIController():
 
         # Number of cycles of the Y wave generator is
         # half of the number of Y rows in the scan
-        Y_CYCLES = int(NY / 2)
+        Y_CYCLES = int(self.records["NY"].get() / 2)
 
         # Create a dictionary of the scan parameters
         # which we will use for string substitution in commands
-        self.scan_parameters = {"TABLEX": TABLEX,
+        self.params = {"TABLEX": TABLEX,
                                 "TABLEY": TABLEY,
                                 "TABLEZ": TABLEZ,
                                 "AXISX": AXISX,
                                 "AXISY": AXISY,
                                 "AXISZ": AXISZ,
-                                "EXPOSURE": EXPOSURE,
-                                "MOVETIME": MOVETIME,
-                                "rows": Y_CYCLES,
-                                "DX": DX,
-                                "DY": DY,
-                                "NX": NX,
-                                "NY": NY,
-                                "X0": X0,
-                                "Y0": Y0,
-                                "Z0": Z0}
+                                "rows": Y_CYCLES}
+
+        for key, record in self.records.iteritems():
+            self.params[key] = record.get()
+
+    def add(self, command, command_type="setup"):
+        """Append a line to store of commands"""
+        if command_type == "setup":
+            self.setup_commands += command
+        elif command_type == "start":
+            self.start_commands += command
+        elif command_type == "stop":
+            self.stop_commands += command
 
     def start_scan(self, value):
+        self.records["scan_talking"].set(1)
+        self.prepare_setup_commands()
+        self.prepare_start_commands()
+
+        self.send_setup_commands()
+        cothread.Sleep(1)
+        self.send_start_commands()
+        self.records["scan_talking"].set(0)
 
 
-
+    def prepare_setup_commands(self):
 
         # Start creating a row...
         # Add x steps forwards
-        for i in xrange(self.scan_parameters["NX"]):
+        for i in xrange(self.params["NX"]):
             if i == 0:
                 first = "X"
             else:
                 first = "&"
-            setup_commands_step_scan += setup_commands_x_step.format(xDemand=self.scan_parameters["DX"]*i, first=first, **self.scan_parameters)
+            self.add(self.templates["x_step"].x_step.format(xDemand=self.params["DX"] * i, first=first, **self.params))
 
         # Add y step
-        y_wait_time = NX * (MOVETIME + EXPOSURE)
-        y_move_time = MOVETIME
+        y_wait_time = self.params["NX"] * (self.params["MOVETIME"] + self.params["EXPOSURE"])
+        y_move_time = self.params["MOVETIME"]
         y0 = 0
-        y1 = y0 + DY
-        setup_commands_step_scan += setup_commands_y_step.format(y0=y0, y1=y1, first="X",
-                                                                 yWaitTime=y_wait_time,
-                                                                 yMOVETIME=y_move_time,
-                                                                 xDemand=(NX-1) * DX,
-                                                                 **common_dict)
+        y1 = y0 + self.params["DY"]
+        x_demand = (self.params["NX"] - 1) * self.params["DX"]
+        self.add(self.templates["y_step"].format(y0=y0, y1=y1, first="X",
+                                                 yWaitTime=y_wait_time,
+                                                 yMOVETIME=y_move_time,
+                                                 xDemand=x_demand,
+                                                 **self.params))
 
         # Add x steps backwards
-        for i in xrange(NX):
+        for i in xrange(self.params["NX"]):
             first = "&"
-            setup_commands_step_scan += setup_commands_x_step.format(xDemand=DX*(NX - 1 - i), first=first, **self.scan_parameters)
+            x_demand = self.params["DX"]*(self.params["NX"] - 1 - i)
+            self.add(self.templates["x_step"].format(xDemand=x_demand, first=first, **self.params))
 
         # Add y step
-        y_wait_time = NX * (MOVETIME + EXPOSURE)
-        y_move_time = MOVETIME
-        y0 = DY
-        y1 = y0 + DY
-        setup_commands_step_scan += setup_commands_y_step.format(y0=y0, y1=y1, first="&",
+        y_wait_time = self.params["NX"] * (self.params["MOVETIME"] + self.params["EXPOSURE"])
+        y_move_time = self.params["MOVETIME"]
+        y0 = self.params["DY"]
+        y1 = y0 + self.params["DY"]
+        x_demand = 0 * self.params["DX"]
+        self.add(self.templates["y_step"].format(y0=y0, y1=y1, first="&",
                                                                  yWaitTime=y_wait_time,
                                                                  yMOVETIME=y_move_time,
-                                                                 xDemand = 0 * DX,
-                                                                 **self.scan_parameters)
-
-
-
-
-        # Set up data recording,
-        # Move to start poisition
-        setup_commands_rest = """WTR 0 20 1
-        RTR 40
-        WSL 1 1
-        WSL 2 2
-        WGC 1 {Y_CYCLES:d}
-        TWC
-        DRC 1 1 2
-        DRC 2 2 2
-        DRC 3 3 2
-        DRC 4 1 1
-        DRC 5 2 1
-        DRC 6 3 1
-        WOS 1 0
-        WOS 2 0
-        MOV 1 10
-        MOV 2 10
-        MOV 3 10
-        WOS 1 10
-        WOS 2 10"""
+                                                                 xDemand = x_demand,
+                                                                 **self.params))
 
         # Format everything
-        setup_commands_step_scan += setup_commands_rest
-        setup_commands_step_scan = setup_commands_step_scan.format(**self.scan_parameters)
+        self.add(self.templates["rest"].format(**self.params))
 
-        start_commands = """WGO 1 257 2 257"""
+    def prepare_start_commands(self):
+        # Start commands
+        self.add("""WGO 1 257 2 257""", command_type="start")
 
-        self.records["scan_talking"].set(1)
+    def prepare_stop_commands(self):
+        self.add(self.templates["stop_commands"], command_type="stop")
+
+    def send_setup_commands(self):
+        """Send down the setup commands"""
+
         print "Sending setup commands"
         start = time.time()
         status = self.send_multiline(setup_commands_step_scan)
         end = time.time()
         print "elapsed time: %f s" % (end - start)
 
-        if (status == False):
-            # Bail
-            return
+        return status
 
-        cothread.Sleep(1)
+    def send_start_commands(self):
+        """Send down the start commands which actually triggers the start of the scan"""
 
         print "Sending start commands"
         start = time.time()
