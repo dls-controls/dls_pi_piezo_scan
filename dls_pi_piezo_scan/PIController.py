@@ -9,6 +9,10 @@ import cothread
 
 # Other files in this module
 import CommandTemplates, RecordInterface
+import CommandStore
+
+REPLACE = "X"
+APPEND = "&"
 
 class PIController():
     def __init__(self, host, port=50000, debug=False):
@@ -27,9 +31,9 @@ class PIController():
         self.create_records()
 
         # Prepare command templates
-        self.setup_commands = ""
-        self.start_commands = ""
-        self.stop_commands = ""
+        self.setup_commands = CommandStore.CommandStore()
+        self.start_commands = CommandStore.CommandStore()
+        self.stop_commands = CommandStore.CommandStore()
         self.load_command_templates()
 
         # Prepare stop commands so they are always ready to go, since they never change
@@ -135,15 +139,6 @@ class PIController():
         for key, record in self.records.iteritems():
             self.params[key] = record.get()
 
-    def add(self, command, command_type="setup"):
-        """Append a line to store of commands"""
-        if command_type == "setup":
-            self.setup_commands += command
-        elif command_type == "start":
-            self.start_commands += command
-        elif command_type == "stop":
-            self.stop_commands += command
-
     def start_scan(self, value):
         """Sets up and starts a scan"""
         self.records["scan_talking"].set(1)
@@ -156,67 +151,113 @@ class PIController():
         self.records["scan_talking"].set(0)
 
 
+    def create_odd_rows(self):
+        """Create an odd row: x steps forwards then y makes one step forwards"""
+
+        # Add the x steps forwards
+        for step in xrange(self.params["NX"]):
+            if step == 0:
+                # First step replaces wavetable contents
+                action = REPLACE
+            else:
+                # Subsequent steps are appended
+                action = APPEND
+
+            self.setup_commands.add(self.templates["x_step"].format(
+                xDemand=self.params["DX"] * step, first=action, **self.params))
+
+        # Add the y step
+        # Y waits while X is going forward
+        # then moves one step of its own
+
+        # How long y waits while x is moving
+        y_wait_time = self.params["NX"] * (
+                self.params["MOVETIME"] + self.params["EXPOSURE"])
+        # Time for y to move one step
+        y_move_time = self.params["MOVETIME"]
+        # y position before step
+        # is zero because we set generator to start where it left off
+        y0 = 0
+        # y postiion after step
+        y1 = y0 + self.params["DY"]
+        # X waits at the last position in the row
+        x_demand = (self.params["NX"] - 1) * self.params["DX"]
+
+        # Add the commands
+        self.setup_commands.add(
+            self.templates["y_step"].format(y0=y0, y1=y1, first=REPLACE,
+                                            yWaitTime=y_wait_time,
+                                            yMOVETIME=y_move_time,
+                                            xDemand=x_demand,
+                                            **self.params))
+
+    def create_even_rows(self):
+        """Create an even-numbered row: x steps backwards then y makes one step forwards"""
+
+        # Add the x steps backwards
+        for step in xrange(self.params["NX"]):
+            # Always append since even row is added after odd
+            action = APPEND
+            x_demand = self.params["DX"] * (self.params["NX"] - 1 - step)
+            self.setup_commands.add(
+                self.templates["x_step"].format(xDemand=x_demand, first=action,
+                                                **self.params))
+
+        # Add the y step
+        # Y waits while X is going forward
+        # then moves one step of its own
+
+        # How long Y waits for while X is moving
+        y_wait_time = self.params["NX"] * (
+        self.params["MOVETIME"] + self.params["EXPOSURE"])
+        # Time for Y to complete 1 step
+        y_move_time = self.params["MOVETIME"]
+        # Y start position for step: from endpoint of previous step
+        y0 = self.params["DY"]
+        # Y end position for step
+        y1 = y0 + self.params["DY"]
+        # X waits at last position of row
+        x_demand = 0 * self.params["DX"]
+
+        # Add the commands
+        self.setup_commands.add(
+            self.templates["y_step"].format(y0=y0, y1=y1, first=APPEND,
+                                            yWaitTime=y_wait_time,
+                                            yMOVETIME=y_move_time,
+                                            xDemand=x_demand,
+                                            **self.params))
+
     def prepare_setup_commands(self):
         """Prepares the setup commands with the current scan parameters"""
 
-        # Start creating a row...
-        # Add x steps forwards
-        for i in xrange(self.params["NX"]):
-            if i == 0:
-                first = "X"
-            else:
-                first = "&"
-            self.add(self.templates["x_step"].x_step.format(xDemand=self.params["DX"] * i, first=first, **self.params))
+        self.get_scan_parameters()
+        self.setup_commands.clear()
 
-        # Add y step
-        y_wait_time = self.params["NX"] * (self.params["MOVETIME"] + self.params["EXPOSURE"])
-        y_move_time = self.params["MOVETIME"]
-        y0 = 0
-        y1 = y0 + self.params["DY"]
-        x_demand = (self.params["NX"] - 1) * self.params["DX"]
-        self.add(self.templates["y_step"].format(y0=y0, y1=y1, first="X",
-                                                 yWaitTime=y_wait_time,
-                                                 yMOVETIME=y_move_time,
-                                                 xDemand=x_demand,
-                                                 **self.params))
+        # Create the odd and even rows
+        self.create_odd_rows()
+        self.create_even_rows()
 
-        # Add x steps backwards
-        for i in xrange(self.params["NX"]):
-            first = "&"
-            x_demand = self.params["DX"]*(self.params["NX"] - 1 - i)
-            self.add(self.templates["x_step"].format(xDemand=x_demand, first=first, **self.params))
-
-        # Add y step
-        y_wait_time = self.params["NX"] * (self.params["MOVETIME"] + self.params["EXPOSURE"])
-        y_move_time = self.params["MOVETIME"]
-        y0 = self.params["DY"]
-        y1 = y0 + self.params["DY"]
-        x_demand = 0 * self.params["DX"]
-        self.add(self.templates["y_step"].format(y0=y0, y1=y1, first="&",
-                                                                 yWaitTime=y_wait_time,
-                                                                 yMOVETIME=y_move_time,
-                                                                 xDemand = x_demand,
-                                                                 **self.params))
-
-        # Format everything
-        self.add(self.templates["rest"].format(**self.params))
+        # Add remaining commands
+        Y_CYCLES = self.params["NY"]/2
+        self.setup_commands.add(self.templates["rest"].format(Y_CYCLES=Y_CYCLES, **self.params))
 
     def prepare_start_commands(self):
         """Prepare the commands that will start the scan"""
 
-        self.add("""WGO 1 257 2 257""", command_type="start")
+        self.start_commands.clear()
+        self.start_commands.add("""WGO 1 257 2 257""")
 
     def prepare_stop_commands(self):
         """Prepare the commands that will stop the scan"""
 
-        self.add(self.templates["stop_commands"], command_type="stop")
+        self.stop_commands.add(self.templates["stop_commands"])
 
     def send_setup_commands(self):
         """Send down the setup commands"""
 
         print "Sending setup commands"
         start = time.time()
-        status = self.send_multiline(setup_commands_step_scan)
+        status = self.send_multiline(self.setup_commands.get())
         end = time.time()
         print "elapsed time: %f s" % (end - start)
 
@@ -228,7 +269,7 @@ class PIController():
 
         print "Sending start commands"
         start = time.time()
-        self.send_multiline(start_commands)
+        self.send_multiline(self.start_commands.get())
         end = time.time()
         print "elapsed time: %f s" % (end - start)
         self.records["scan_talking"].set(0)
@@ -241,6 +282,6 @@ class PIController():
 
         print "Sending stop commands"
         start = time.time()
-        self.send_multiline(self.stop_commands)
+        self.send_multiline(self.stop_commands.get())
         end = time.time()
         print "elapsed time: %f s" % (end - start)

@@ -62,22 +62,39 @@ class TestStopCommands(PIControllerTest):
 
     def test_stop_commands(self):
         # Stop commands > 0 length
-        self.assertGreater(len(self.controller.stop_commands), 0)
+        self.assertGreater(len(self.controller.stop_commands.get()), 0)
 
 class TestAdd(PIControllerTest):
     """TestAdd - add commands to the internal store"""
 
     def test_add(self):
-        self.assertEqual(self.controller.setup_commands, "")
-        self.controller.add("some command")
-        self.assertEqual(self.controller.setup_commands, "some command")
-        self.controller.add("\nanother command")
-        self.assertEqual(self.controller.setup_commands, "some command\nanother command")
+        self.assertEqual(self.controller.setup_commands.get(), "")
+        self.controller.setup_commands.add("some command")
+        self.assertEqual(self.controller.setup_commands.get(), "some command")
+        self.controller.setup_commands.add("\nanother command")
+        self.assertEqual(self.controller.setup_commands.get(), "some command\nanother command")
+        self.controller.setup_commands.clear()
+        self.assertEqual(self.controller.setup_commands.get(), "")
 
-        self.assertEqual(self.controller.start_commands, "")
-        self.controller.add("start command", command_type="start")
-        self.assertEqual(self.controller.start_commands, "start command")
+        self.assertEqual(self.controller.start_commands.get(), "")
+        self.controller.start_commands.add("start command")
+        self.assertEqual(self.controller.start_commands.get(), "start command")
+        self.controller.start_commands.clear()
+        self.assertEqual(self.controller.start_commands.get(), "")
 
+class TestStartCommands(PIControllerTest):
+    """TestStartCommands"""
+
+    def test_start_commands(self):
+        self.controller.prepare_start_commands()
+        print self.controller.start_commands.get()
+
+class TestSetupCommands(PIControllerTest):
+    """TestSetupCommands"""
+
+    def test_start_commands(self):
+        self.controller.prepare_setup_commands()
+        print self.controller.setup_commands.get()
 
 if __name__ == "__main__":
 
