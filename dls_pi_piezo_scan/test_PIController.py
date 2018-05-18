@@ -11,6 +11,7 @@ from softioc import softioc, builder
 import unittest
 import random
 
+import logging
 
 
 
@@ -91,6 +92,7 @@ class TestStartCommands(PIControllerTest):
     """TestStartCommands"""
 
     def test_start_commands(self):
+        self.scan.get_scan_parameters()
         self.scan.prepare_start_commands()
         print self.scan.start_commands.get()
 
@@ -98,9 +100,11 @@ class TestSetupCommands(PIControllerTest):
     """TestSetupCommands"""
 
     def test_start_commands(self):
+        self.scan.get_scan_parameters()
         self.scan.prepare_setup_commands()
         print self.scan.setup_commands.get()
 
 if __name__ == "__main__":
 
+    logging.basicConfig(level=logging.DEBUG)
     unittest.main()

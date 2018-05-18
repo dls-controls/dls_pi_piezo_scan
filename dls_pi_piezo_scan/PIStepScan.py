@@ -1,5 +1,6 @@
 # Standard dependencies
 import time
+import logging
 
 # Extra dependencies
 from pkg_resources import require
@@ -12,11 +13,26 @@ import RecordInterface
 import CommandStore
 import PIController
 
-REPLACE = "X"
-APPEND = "&"
+ACTION_REPLACE = "X"
+ACTION_APPEND = "&"
+
+STATE_NOT_CONFIGRED = 0
+STATE_PREPARING = 1
+STATE_ERROR = 2
+STATE_READY = 3
+
+# Common bits
+min_x = 0.0
+min_y = 0.0
+min_z = 0.0
+
+max_x = 300.0
+max_y = 300.0
+max_z = 300.0
 
 class PIStepScan():
     def __init__(self, controller):
+        """:param controller PIController object"""
 
         self.controller = controller #type: PIController.PIController
 
@@ -33,14 +49,9 @@ class PIStepScan():
         self.prepare_stop_commands()
 
     def create_records(self):
-        # Common bits
-        min_x = 0.0
-        min_y = 0.0
-        min_z = 0.0
+        """Create records for EPICS interface"""
 
-        max_x = 300.0
-        max_y = 300.0
-        max_z = 300.0
+
 
         self.records = RecordInterface.create_records(self.start_scan,
                                                       min_x, min_y, min_z,
@@ -84,16 +95,68 @@ class PIStepScan():
         for key, record in self.records.iteritems():
             self.params[key] = record.get()
 
+    def verify_parameters(self):
+        """Check validity of scan parameters"""
+        x_range = self.params["DX"] * self.params["NX"]
+        y_range = self.params["DY"] * self.params["NY"]
+        z_range = self.params["DZ"] * self.params["NZ"]
+
+        failure = []
+
+        # Won't hit x limit
+        if self.params["X0"] - (x_range / 2) <= min_x:
+            failure.append("Will hit x negative limit")
+        if self.params["X0"] + (x_range / 2) >= max_x:
+            failure.append("Will hit x positive limit")
+        # Won't hit y limit
+        if self.params["Y0"] - (y_range / 2) <= min_y:
+            failure.append("Will hit y negative limit")
+        if self.params["Y0"] + (y_range / 2) >= max_y:
+            failure.append("Will hit y positive limit")
+        # Won't hit z limit
+        if self.params["Z0"] - (z_range / 2) <= min_z:
+            failure.append("Will hit z negative limit")
+        if self.params["Z0"] + (z_range / 2) >= max_z:
+            failure.append("Will hit z positive limit")
+        # Determine result
+        if len(failure) > 0:
+            logging.error("Parameter checks failed. Reasons: " + ";".join(failure))
+            return False
+        else:
+            logging.info("Parameter checks passed")
+            return True
+
+
     def start_scan(self, value):
         """Sets up and starts a scan"""
-        self.records["scan_talking"].set(1)
-        self.prepare_setup_commands()
-        self.prepare_start_commands()
+        self.records["STATE"].set(STATE_PREPARING)
+        self.get_scan_parameters()
+        # Check parameters are valid
+        if self.verify_parameters() == False:
+            # Parameter checks failed
+            self.records["STATE"].set(STATE_ERROR)
+            return False
+        else:
+            # Parameter checks passed
+            self.prepare_setup_commands()
+            self.prepare_start_commands()
 
-        self.send_setup_commands()
-        cothread.Sleep(1)
-        self.send_start_commands()
-        self.records["scan_talking"].set(0)
+            if self.send_setup_commands() == False:
+                self.records["STATE"].set(STATE_ERROR)
+                logging.error("Error sending setup commands. Won't send start commands.")
+                return False
+
+            # TODO: This sleep is a hack to wait for the pre-move to complete
+            cothread.Sleep(1)
+
+            # TODO: Separate the start commands from the configure commands
+            if self.send_start_commands() == False:
+                self.records["STATE"].set(STATE_ERROR)
+                logging.error("Error sending start commands.")
+                return False
+
+            # Started scan OK.
+            self.records["STATE"].set(STATE_READY)
 
 
     def create_odd_rows(self):
@@ -103,10 +166,10 @@ class PIStepScan():
         for step in xrange(self.params["NX"]):
             if step == 0:
                 # First step replaces wavetable contents
-                action = REPLACE
+                action = ACTION_REPLACE
             else:
                 # Subsequent steps are appended
-                action = APPEND
+                action = ACTION_APPEND
 
             self.setup_commands.add(self.templates["x_step"].format(
                 xDemand=self.params["DX"] * step, first=action, **self.params))
@@ -130,7 +193,7 @@ class PIStepScan():
 
         # Add the commands
         self.setup_commands.add(
-            self.templates["y_step"].format(y0=y0, y1=y1, first=REPLACE,
+            self.templates["y_step"].format(y0=y0, y1=y1, first=ACTION_REPLACE,
                                             yWaitTime=y_wait_time,
                                             yMOVETIME=y_move_time,
                                             xDemand=x_demand,
@@ -142,7 +205,7 @@ class PIStepScan():
         # Add the x steps backwards
         for step in xrange(self.params["NX"]):
             # Always append since even row is added after odd
-            action = APPEND
+            action = ACTION_APPEND
             x_demand = self.params["DX"] * (self.params["NX"] - 1 - step)
             self.setup_commands.add(
                 self.templates["x_step"].format(xDemand=x_demand, first=action,
@@ -166,7 +229,7 @@ class PIStepScan():
 
         # Add the commands
         self.setup_commands.add(
-            self.templates["y_step"].format(y0=y0, y1=y1, first=APPEND,
+            self.templates["y_step"].format(y0=y0, y1=y1, first=ACTION_APPEND,
                                             yWaitTime=y_wait_time,
                                             yMOVETIME=y_move_time,
                                             xDemand=x_demand,
@@ -175,7 +238,8 @@ class PIStepScan():
     def prepare_setup_commands(self):
         """Prepares the setup commands with the current scan parameters"""
 
-        self.get_scan_parameters()
+        # NOTE must have already got and checked parameters
+
         self.setup_commands.clear()
 
         # Create the odd and even rows
@@ -185,6 +249,7 @@ class PIStepScan():
         # Add remaining commands
         Y_CYCLES = self.params["NY"]/2
         self.setup_commands.add(self.templates["rest"].format(Y_CYCLES=Y_CYCLES, **self.params))
+        return True
 
     def prepare_start_commands(self):
         """Prepare the commands that will start the scan"""
@@ -200,11 +265,13 @@ class PIStepScan():
     def send_setup_commands(self):
         """Send down the setup commands"""
 
-        print "Sending setup commands"
+        logging.info("Sending setup commands")
+
         start = time.time()
         status = self.controller.send_multiline(self.setup_commands.get())
         end = time.time()
-        print "elapsed time: %f s" % (end - start)
+
+        logging.info("Finished setup commands, took %f s" % (end - start))
 
         return status
 
@@ -212,21 +279,24 @@ class PIStepScan():
         """Send down the start commands
         This will actually triggers the start of the scan"""
 
-        print "Sending start commands"
+        logging.info("Sending start commands")
+
         start = time.time()
         self.controller.send_multiline(self.start_commands.get())
         end = time.time()
-        print "elapsed time: %f s" % (end - start)
-        self.records["scan_talking"].set(0)
+
+        logging.info("Finished start commands, took %f s" % (end - start))
+
 
     def abort_scan(self, value=None):
         """Wrapper to be used as callback for abort record"""
         self.controller.send_stop_commands()
 
     def send_stop_commands(self):
+        """Send the stop commands to the controller"""
 
-        print "Sending stop commands"
+        logging.info("Sending stop commands")
         start = time.time()
-        self.send_multiline(self.stop_commands.get())
+        self.controller.send_multiline(self.stop_commands.get())
         end = time.time()
-        print "elapsed time: %f s" % (end - start)
+        logging.info("elapsed time: %f s" % (end - start))

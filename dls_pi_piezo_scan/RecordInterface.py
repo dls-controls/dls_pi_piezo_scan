@@ -19,13 +19,14 @@ def create_records(start_scan_function, min_x, min_y, min_z, max_x, max_y, max_z
                                        always_update=True)
 
     # Status to say we're sending commands
-    records["scan_talking"] = builder.mbbIn("TALKING",
+    records["STATE"] = builder.mbbIn("STATE",
                                             initial_value=0,
                                             PINI='YES',
                                             NOBT=2,
-                                            ZRVL=0, ZRST='Ready',
-                                            ONVL=1, ONST='Talking',
-                                            ZRSV="NO_ALARM", ONSV="MINOR"
+                                            ZRVL=0, ZRST='Not configured', ZRSV="INVALID",
+                                            ONVL=1, ONST='Preparing', ONSV="MINOR",
+                                            TWVL=2, TWST='Error', TWSV="MAJOR",
+                                            THVL=3, THST='Ready', THSV="NO_ALARM",
                                             )
     # Number of steps in x
     records["NX"] = builder.longOut("NX",
@@ -34,6 +35,11 @@ def create_records(start_scan_function, min_x, min_y, min_z, max_x, max_y, max_z
                                              LOPR=1, HOPR=1000000)
     # Number of steps in y
     records["NY"] = builder.longOut("NY",
+                                             initial_value=30,
+                                             PINI='YES',
+                                             DRVL=1, DRVH=1000000)
+    # Number of steps in z
+    records["NZ"] = builder.longOut("NZ",
                                              initial_value=30,
                                              PINI='YES',
                                              DRVL=1, DRVH=1000000)
@@ -49,6 +55,13 @@ def create_records(start_scan_function, min_x, min_y, min_z, max_x, max_y, max_z
                                         PINI='YES',
                                         DRVL=0.001, DRVH=300.0,
                                       EGU="um", PREC=3)
+
+    # z step size / um
+    records["DZ"] = builder.aOut("DZ",
+                                 initial_value=0.1,
+                                 PINI='YES',
+                                 DRVL=0.001, DRVH=300.0,
+                                 EGU="um", PREC=3)
 
     # x centre position / um
     records["X0"] = builder.aOut("X0",

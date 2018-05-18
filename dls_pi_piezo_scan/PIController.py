@@ -1,5 +1,6 @@
 # Standard dependencies
 import socket
+import logging
 
 class PIController():
     """Handles connection to the controller and sending/receiving commands"""
@@ -24,38 +25,49 @@ class PIController():
         """Connect socket to controller"""
         if not self.debug:
             self.socket.connect((self.host, self.port))
+            logging.info(
+                "Connect to real controller at host = %s:%d" % (
+                self.host, self.port))
         else:
-            print "DEBUG CONNECT host = %s:%d" %(self.host, self.port)
+            logging.info("Controller created in debug mode, pretent to CONNECT host = %s:%d" %(self.host, self.port))
 
     def send(self, command):
         """Send a string to the controller"""
         if not self.debug:
             self.socket.send(command)
+            logging.debug("SEND %s" % command)
         else:
-            print "DEBUG SEND %s" % command
+            logging.info("SEND %s" % command)
 
     def send_multiline(self, multiline_input):
         """Send a multiline string of commands line by line"""
         for line in multiline_input.split("\n"):
-            print "Send " + line.strip()
+            logging.debug("Send " + line.strip())
             self.send(line.strip() + "\n")
 
         # Check if any previous lines caused errors
         self.send("ERR?\n")
-        if int(self.print_response()) != 0:
-            print "Stopping on controller error"
+        if int(self.get_response()) != 0:
+            logging.error("send_multiline: Stopping on controller error")
             return False
 
         return True
 
-    def print_response(self):
-        """Receive a line and print it"""
+    def get_response(self):
+        """Receive a line from controller"""
         if not self.debug:
             data = ""
             while "\n" not in data:
-                data = data + self.socket.recv(1024)
-            print data
-        data = "0"
+                try:
+                    data = data + self.socket.recv(1024)
+                except:
+                    logging.warning("Timeout on receive from socket")
+            logging.info("RECEIVE: " + data)
+        else:
+            logging.info("Receive in debug mode")
+            # The zero makes ERR? command happy
+            data = "0"
+
         return data
 
     def __enter__(self):
