@@ -1,5 +1,6 @@
 #!/bin/env dls-python
 import PIController
+import PIStepScan
 
 from pkg_resources import require
 require('cothread==2.13')
@@ -12,6 +13,8 @@ import random
 
 
 
+
+
 class PIControllerTest(unittest.TestCase):
     """A"""
 
@@ -19,11 +22,13 @@ class PIControllerTest(unittest.TestCase):
         print self.__doc__
         builder.SetDeviceName(self.__doc__.split(" ")[0])
         self.controller = PIController.PIController(host="127.0.0.1", port=50000, debug=True)
+        self.scan = PIStepScan.PIStepScan(self.controller)
 
         random.seed()
 
     def tearDown(self):
         self.controller = None
+        self.scan = None
 
 class TestRecords(PIControllerTest):
     """TestRecords - test setting scan parameters via records"""
@@ -42,59 +47,59 @@ class TestRecords(PIControllerTest):
 
         # Set these values in the records
         for key, value in data.iteritems():
-            self.controller.records[key].set(value)
+            self.scan.records[key].set(value)
 
         # Get the parameters from the records
-        self.controller.get_scan_parameters()
+        self.scan.get_scan_parameters()
 
         # Check the values were set
         for key, value in data.iteritems():
-            self.assertEqual(self.controller.params[key], value)
+            self.assertEqual(self.scan.params[key], value)
 
 class TestTemplate(PIControllerTest):
     """TestTemplate - check we can call the load_command_template smethod"""
 
     def test_template(self):
-        self.controller.load_command_templates()
+        self.scan.load_command_templates()
 
 class TestStopCommands(PIControllerTest):
     """TestStopCommands - make sure stop commands are made by constructor"""
 
     def test_stop_commands(self):
         # Stop commands > 0 length
-        self.assertGreater(len(self.controller.stop_commands.get()), 0)
+        self.assertGreater(len(self.scan.stop_commands.get()), 0)
 
 class TestAdd(PIControllerTest):
     """TestAdd - add commands to the internal store"""
 
     def test_add(self):
-        self.assertEqual(self.controller.setup_commands.get(), "")
-        self.controller.setup_commands.add("some command")
-        self.assertEqual(self.controller.setup_commands.get(), "some command")
-        self.controller.setup_commands.add("\nanother command")
-        self.assertEqual(self.controller.setup_commands.get(), "some command\nanother command")
-        self.controller.setup_commands.clear()
-        self.assertEqual(self.controller.setup_commands.get(), "")
+        self.assertEqual(self.scan.setup_commands.get(), "")
+        self.scan.setup_commands.add("some command")
+        self.assertEqual(self.scan.setup_commands.get(), "some command")
+        self.scan.setup_commands.add("\nanother command")
+        self.assertEqual(self.scan.setup_commands.get(), "some command\nanother command")
+        self.scan.setup_commands.clear()
+        self.assertEqual(self.scan.setup_commands.get(), "")
 
-        self.assertEqual(self.controller.start_commands.get(), "")
-        self.controller.start_commands.add("start command")
-        self.assertEqual(self.controller.start_commands.get(), "start command")
-        self.controller.start_commands.clear()
-        self.assertEqual(self.controller.start_commands.get(), "")
+        self.assertEqual(self.scan.start_commands.get(), "")
+        self.scan.start_commands.add("start command")
+        self.assertEqual(self.scan.start_commands.get(), "start command")
+        self.scan.start_commands.clear()
+        self.assertEqual(self.scan.start_commands.get(), "")
 
 class TestStartCommands(PIControllerTest):
     """TestStartCommands"""
 
     def test_start_commands(self):
-        self.controller.prepare_start_commands()
-        print self.controller.start_commands.get()
+        self.scan.prepare_start_commands()
+        print self.scan.start_commands.get()
 
 class TestSetupCommands(PIControllerTest):
     """TestSetupCommands"""
 
     def test_start_commands(self):
-        self.controller.prepare_setup_commands()
-        print self.controller.setup_commands.get()
+        self.scan.prepare_setup_commands()
+        print self.scan.setup_commands.get()
 
 if __name__ == "__main__":
 
