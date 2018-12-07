@@ -42,8 +42,12 @@ class PIController():
     def send_multiline(self, multiline_input):
         """Send a multiline string of commands line by line"""
         for line in multiline_input.split("\n"):
-            logging.debug("Send " + line.strip())
-            self.send(line.strip() + "\n")
+            line_stripped = line.strip()
+            if len(line_stripped) > 0:
+                logging.debug("Send " + line_stripped)
+                self.send(line_stripped + "\n")
+            else:
+                logging.warning("Skipped sending empty command line")
 
         # Check if any previous lines caused errors
         self.send("ERR?\n")

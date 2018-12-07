@@ -4,22 +4,15 @@ import logging
 
 # Extra dependencies
 from pkg_resources import require
-require('cothread==2.13')
-import cothread
 
 # Other files in this module
 import CommandTemplates
 import RecordInterface
 import CommandStore
 import PIController
+import CoordinateTransform
 
-ACTION_REPLACE = "X"
-ACTION_APPEND = "&"
-
-STATE_NOT_CONFIGRED = 0
-STATE_PREPARING = 1
-STATE_ERROR = 2
-STATE_READY = 3
+from PIConstants import *
 
 # Common bits
 min_x = 0.0
@@ -48,14 +41,16 @@ class PIStepScan():
         # Prepare stop commands so they are always ready to go, since they never change
         self.prepare_stop_commands()
 
+        # Create coordinate transformation object
+        self.transform = CoordinateTransform.CoordinateTransform()
+
     def create_records(self):
         """Create records for EPICS interface"""
 
-
-
-        self.records = RecordInterface.create_records(self.start_scan,
-                                                      min_x, min_y, min_z,
-                                                      max_x, max_y, max_z)
+        self.records = RecordInterface.create_records(configure_scan_function=self.configure_scan,
+                                                        start_scan_function=self.start_scan,
+                                                      min_x=min_x, min_y=min_y, min_z=min_z,
+                                                      max_x=max_x, max_y=max_y, max_z=max_z)
 
     def load_command_templates(self):
         """Makes the command templates accessible"""
@@ -67,17 +62,6 @@ class PIStepScan():
         building commands"""
 
         # Scan parameters
-
-        # Which wave table for which axis
-        TABLEX = 1
-        TABLEY = 2
-        TABLEZ = 3
-
-        # Axis number assignments
-        AXISX = 1
-        AXISY = 2
-        AXISZ = 3
-
         # Number of cycles of the Y wave generator is
         # half of the number of Y rows in the scan
         Y_CYCLES = int(self.records["NY"].get() / 2)
@@ -92,6 +76,7 @@ class PIStepScan():
                                 "AXISZ": AXISZ,
                                 "rows": Y_CYCLES}
 
+        # Get all the values from our records
         for key, record in self.records.iteritems():
             self.params[key] = record.get()
 
@@ -108,16 +93,31 @@ class PIStepScan():
             failure.append("Will hit x negative limit")
         if self.params["X0"] + (x_range / 2) >= max_x:
             failure.append("Will hit x positive limit")
+
         # Won't hit y limit
         if self.params["Y0"] - (y_range / 2) <= min_y:
             failure.append("Will hit y negative limit")
         if self.params["Y0"] + (y_range / 2) >= max_y:
             failure.append("Will hit y positive limit")
+
         # Won't hit z limit
         if self.params["Z0"] - (z_range / 2) <= min_z:
             failure.append("Will hit z negative limit")
         if self.params["Z0"] + (z_range / 2) >= max_z:
             failure.append("Will hit z positive limit")
+
+        # Number of wave points can fit in available memory
+        total_points = self.calculate_required_data_points()
+        points_percentage = float(total_points) / float(E727_AVAILALBE_DATAPOINTS) * 100.0
+
+        if total_points > E727_AVAILALBE_DATAPOINTS:
+            failure.append("Too many points in scan. "
+                           "Requested %d but only %d availale on controller." % (
+                total_points, E727_AVAILALBE_DATAPOINTS))
+        else:
+            logging.info("We will use %d of %d data points for wavetable (%.1f%%)" % (
+            total_points, E727_AVAILALBE_DATAPOINTS, points_percentage))
+
         # Determine result
         if len(failure) > 0:
             logging.error("Parameter checks failed. Reasons: " + ";".join(failure))
@@ -126,30 +126,57 @@ class PIStepScan():
             logging.info("Parameter checks passed")
             return True
 
+    def calculate_required_data_points(self):
+        # TODO: Not sure this is a perfect calculation yet
+        # TODO: Only valid with 1ms per point (WTR = 20) as currently
+        # TODO actually its definitely not because Y takes less than the others
+        points_per_x_step = self.params["MOVETIME"] + self.params["EXPOSURE"]
+        points_per_y_step = self.params["MOVETIME"] + self.params["EXPOSURE"]
+        points_per_z_step = self.params["MOVETIME"] + self.params["EXPOSURE"]
+        total_points = points_per_x_step * self.params["NX"] + \
+                       points_per_y_step * self.params["NY"] + \
+                       points_per_z_step * self.params["NZ"]
+        return total_points
 
-    def start_scan(self, value):
-        """Sets up and starts a scan"""
+    def configure_scan(self, value = None):
+        """Sets up a scan"""
+
         self.records["STATE"].set(STATE_PREPARING)
         self.get_scan_parameters()
+
         # Check parameters are valid
         if self.verify_parameters() == False:
             # Parameter checks failed
             self.records["STATE"].set(STATE_ERROR)
             return False
+
+        if self.prepare_setup_commands() == False:
+            self.records["STATE"].set(STATE_ERROR)
+            return False
+
+        if self.prepare_start_commands() == False:
+            self.records["STATE"].set(STATE_ERROR)
+            return False
+
+        if self.send_setup_commands() == False:
+            self.records["STATE"].set(STATE_ERROR)
+            return False
+
+        if True:
+            # If we got to this point then configured scan OK.
+            self.records["STATE"].set(STATE_READY)
+
+    def start_scan(self, value = None):
+        """starts a scan which has already been configured"""
+
+        # Check scan has been configured
+        if self.records["STATE"].get() != STATE_READY:
+            # Parameter checks failed
+            self.records["STATE"].set(STATE_ERROR)
+            logging.error("Can't start scan - needs to be configured first")
+            return False
         else:
-            # Parameter checks passed
-            self.prepare_setup_commands()
-            self.prepare_start_commands()
 
-            if self.send_setup_commands() == False:
-                self.records["STATE"].set(STATE_ERROR)
-                logging.error("Error sending setup commands. Won't send start commands.")
-                return False
-
-            # TODO: This sleep is a hack to wait for the pre-move to complete
-            cothread.Sleep(1)
-
-            # TODO: Separate the start commands from the configure commands
             if self.send_start_commands() == False:
                 self.records["STATE"].set(STATE_ERROR)
                 logging.error("Error sending start commands.")

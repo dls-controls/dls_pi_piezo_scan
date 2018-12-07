@@ -2,7 +2,9 @@ from pkg_resources import require
 require('epicsdbbuilder==1.0')
 from softioc import builder
 
-def create_records(start_scan_function, min_x, min_y, min_z, max_x, max_y, max_z):
+def create_records(configure_scan_function,
+                   start_scan_function,
+                   min_x, min_y, min_z, max_x, max_y, max_z):
     """Create the records for the scan interface"""
 
     # We'll return them in a dict
@@ -13,9 +15,18 @@ def create_records(start_scan_function, min_x, min_y, min_z, max_x, max_y, max_z
                                        initial_value=0,
                                        PINI='NO',
                                        NOBT=2,
-                                       ZRVL=0, ZRST='Stop',
-                                       ONVL=1, ONST='Go',
+                                       ZRVL=0, ZRST='Start',
+                                       ONVL=1, ONST='Starting',
                                        on_update=start_scan_function,
+                                       always_update=True)
+
+    records["configure_scan"] = builder.mbbOut('CONFIGURE',
+                                       initial_value=0,
+                                       PINI='NO',
+                                       NOBT=2,
+                                       ZRVL=0, ZRST='Configure',
+                                       ONVL=1, ONST='Configuring',
+                                       on_update=configure_scan_function,
                                        always_update=True)
 
     # Status to say we're sending commands
@@ -82,6 +93,13 @@ def create_records(start_scan_function, min_x, min_y, min_z, max_x, max_y, max_z
                                       PINI='YES',
                                       DRVL=min_z, DRVH=max_z,
                                       EGU="um", PREC=3)
+
+    # Theta rotation about Y / degrees
+    records["THETA"] = builder.aOut("THETA",
+                                 initial_value=0.0,
+                                 PINI='YES',
+                                 DRVL=-360, DRVH=360,
+                                 EGU="deg", PREC=3)
 
     # EXPOSURE time / ms
     records["EXPOSURE"] = builder.aOut("EXPOSURE",

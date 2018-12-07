@@ -2,16 +2,15 @@ import os
 import sys
 import logging
 
-
-
-import PIController
-import PIStepScan
-
 from pkg_resources import require
 require('cothread==2.13')
 require('epicsdbbuilder==1.0')
+require("numpy")
 
 from softioc import softioc, builder
+
+import PIController
+import PIStepScan
 
 if __name__ == '__main__':
     # Prepare params for IOC
@@ -25,7 +24,9 @@ if __name__ == '__main__':
     # Terminal server
     # pi_controller = PIController("172.23.82.5", 4011)
     # Ethernet
-    pi_controller = PIController.PIController("172.23.82.249", 50000, debug=True)
+    #pi_controller = PIController.PIController("172.23.82.249", 50000, debug=False)
+    pi_controller = PIController.PIController("Fake address 01", 50000,
+                                              debug=True)
 
     # Step scan logic and records
     pi_step_scan = PIStepScan.PIStepScan(pi_controller)
