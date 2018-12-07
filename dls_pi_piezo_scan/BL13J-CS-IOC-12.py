@@ -30,6 +30,8 @@ if __name__ == '__main__':
 
     # Step scan logic and records
     pi_step_scan = PIStepScan.PIStepScan(pi_controller)
+    # Create our records
+    pi_step_scan.create_records()
 
     # Start IOC
     builder.LoadDatabase()

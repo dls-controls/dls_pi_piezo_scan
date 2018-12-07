@@ -29,9 +29,6 @@ class PIStepScan():
 
         self.controller = controller #type: PIController.PIController
 
-        # Create our records
-        self.create_records()
-
         # Prepare command templates
         self.setup_commands = CommandStore.CommandStore()
         self.start_commands = CommandStore.CommandStore()
