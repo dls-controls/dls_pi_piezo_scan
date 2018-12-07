@@ -23,6 +23,19 @@ max_x = 300.0
 max_y = 300.0
 max_z = 300.0
 
+class Param():
+    """A parameter with some of the same interface as an EPICS
+    record from epicsdbbuilder, so we can post params in externally."""
+    def __init__(self, value, name=None):
+        self.name = name
+        self.value = value
+
+    def set(self, new_value):
+        self.value = new_value
+
+    def get(self):
+        return self.value
+
 class PIStepScan():
     def __init__(self, controller):
         """:param controller PIController object"""
@@ -41,6 +54,10 @@ class PIStepScan():
         # Create coordinate transformation object
         self.transform = CoordinateTransform.CoordinateTransform()
 
+        # Placeholder for EPICS records. Remains None if we
+        # use outside an IOC
+        self.records = None
+
     def create_records(self):
         """Create records for EPICS interface"""
 
@@ -48,6 +65,14 @@ class PIStepScan():
                                                         start_scan_function=self.start_scan,
                                                       min_x=min_x, min_y=min_y, min_z=min_z,
                                                       max_x=max_x, max_y=max_y, max_z=max_z)
+
+    def insert_params(self, params):
+        """Create "records" from an external list, which are actually Param objects"""
+
+        self.records = {}
+        for key, value in params.iteritems():
+            self.records[key] = Param(value)
+
 
     def load_command_templates(self):
         """Makes the command templates accessible"""
@@ -86,21 +111,21 @@ class PIStepScan():
         failure = []
 
         # Won't hit x limit
-        if self.params["X0"] - (x_range / 2) <= min_x:
+        if self.params["X0"] < min_x:
             failure.append("Will hit x negative limit")
-        if self.params["X0"] + (x_range / 2) >= max_x:
+        if self.params["X0"] + x_range > max_x:
             failure.append("Will hit x positive limit")
 
         # Won't hit y limit
-        if self.params["Y0"] - (y_range / 2) <= min_y:
+        if self.params["Y0"] < min_y:
             failure.append("Will hit y negative limit")
-        if self.params["Y0"] + (y_range / 2) >= max_y:
+        if self.params["Y0"] + y_range > max_y:
             failure.append("Will hit y positive limit")
 
         # Won't hit z limit
-        if self.params["Z0"] - (z_range / 2) <= min_z:
+        if self.params["Z0"]  < min_z:
             failure.append("Will hit z negative limit")
-        if self.params["Z0"] + (z_range / 2) >= max_z:
+        if self.params["Z0"] + z_range > max_z:
             failure.append("Will hit z positive limit")
 
         # Number of wave points can fit in available memory
@@ -135,53 +160,58 @@ class PIStepScan():
                        points_per_z_step * self.params["NZ"]
         return total_points
 
-    def configure_scan(self, value = None):
+    def set_state(self, new_state):
+        self.records["STATE"].set(new_state)
+
+    def get_state(self):
+        return self.records["STATE"].get()
+
+    def configure_scan(self):
         """Sets up a scan"""
 
-        self.records["STATE"].set(STATE_PREPARING)
+        self.set_state(STATE_PREPARING)
         self.get_scan_parameters()
 
         # Check parameters are valid
         if self.verify_parameters() == False:
             # Parameter checks failed
-            self.records["STATE"].set(STATE_ERROR)
+            self.set_state(STATE_ERROR)
             return False
 
         if self.prepare_setup_commands() == False:
-            self.records["STATE"].set(STATE_ERROR)
+            self.set_state(STATE_ERROR)
             return False
 
         if self.prepare_start_commands() == False:
-            self.records["STATE"].set(STATE_ERROR)
+            self.set_state(STATE_ERROR)
             return False
 
         if self.send_setup_commands() == False:
-            self.records["STATE"].set(STATE_ERROR)
+            self.set_state(STATE_ERROR)
             return False
 
         if True:
             # If we got to this point then configured scan OK.
-            self.records["STATE"].set(STATE_READY)
+            self.set_state(STATE_READY)
 
     def start_scan(self, value = None):
         """starts a scan which has already been configured"""
 
         # Check scan has been configured
-        if self.records["STATE"].get() != STATE_READY:
+        if self.get_state() != STATE_READY:
             # Parameter checks failed
-            self.records["STATE"].set(STATE_ERROR)
+            self.set_state(STATE_ERROR)
             logging.error("Can't start scan - needs to be configured first")
             return False
         else:
 
             if self.send_start_commands() == False:
-                self.records["STATE"].set(STATE_ERROR)
+                self.set_state(STATE_ERROR)
                 logging.error("Error sending start commands.")
                 return False
 
             # Started scan OK.
-            self.records["STATE"].set(STATE_READY)
-
+            self.set_state(STATE_READY)
 
     def create_odd_rows(self):
         """Create an odd row: x steps forwards then y makes one step forwards"""
@@ -196,7 +226,7 @@ class PIStepScan():
                 action = ACTION_APPEND
 
             self.setup_commands.add(self.templates["x_step"].format(
-                xDemand=self.params["DX"] * step, first=action, **self.params))
+                xDemand=self.params["DX"] * step, first=action, TABLE=TABLEX, **self.params))
 
         # Add the y step
         # Y waits while X is going forward
@@ -221,6 +251,7 @@ class PIStepScan():
                                             yWaitTime=y_wait_time,
                                             yMOVETIME=y_move_time,
                                             xDemand=x_demand,
+                                            TABLE=TABLEY,
                                             **self.params))
 
     def create_even_rows(self):
@@ -233,6 +264,7 @@ class PIStepScan():
             x_demand = self.params["DX"] * (self.params["NX"] - 1 - step)
             self.setup_commands.add(
                 self.templates["x_step"].format(xDemand=x_demand, first=action,
+                                                TABLE=TABLEX,
                                                 **self.params))
 
         # Add the y step
@@ -257,7 +289,14 @@ class PIStepScan():
                                             yWaitTime=y_wait_time,
                                             yMOVETIME=y_move_time,
                                             xDemand=x_demand,
+                                            TABLE=TABLEX,
                                             **self.params))
+
+    def set_wave_generator_cycles(self, table, number_of_cycles):
+        self.setup_commands.add(
+            self.templates["set_wave_generator_cycles"].format(TABLE=table,
+                                                               N_CYCLES=number_of_cycles)
+        )
 
     def prepare_setup_commands(self):
         """Prepares the setup commands with the current scan parameters"""
@@ -270,9 +309,11 @@ class PIStepScan():
         self.create_odd_rows()
         self.create_even_rows()
 
-        # Add remaining commands
         Y_CYCLES = self.params["NY"]/2
-        self.setup_commands.add(self.templates["rest"].format(Y_CYCLES=Y_CYCLES, **self.params))
+        self.set_wave_generator_cycles(TABLEY, Y_CYCLES)
+
+        # Add remaining commands
+        self.setup_commands.add(self.templates["rest"].format(**self.params))
         return True
 
     def prepare_start_commands(self):
@@ -324,3 +365,44 @@ class PIStepScan():
         self.controller.send_multiline(self.stop_commands.get())
         end = time.time()
         logging.info("elapsed time: %f s" % (end - start))
+
+class PICalibrationScan(PIStepScan):
+    def create_signle_row(self):
+        """Create one row """
+
+        # Describe a single step
+        self.setup_commands.add(self.templates["x_step"].format(
+            xDemand=self.params["DX"],
+            first=ACTION_REPLACE,
+            TABLE=TABLEX,
+            **self.params))
+
+        # Set wave generator cycles to do the right number of steps
+        self.set_wave_generator_cycles(self.params["axis_to_scan"], self.params["NX"])
+
+    def prepare_setup_commands(self):
+        """Prepare setup commands. Describe a single step
+        on the axis to be scanned, then set the wave generator cycles to
+        the number of steps."""
+
+        self.setup_commands.clear()
+        self.create_signle_row()
+
+        # Set up triggering
+        # Set level high for one wave generator cycle when we are stationary between steps
+        trigger_point = self.params["MOVETIME"] + int(self.params["EXPOSURE"] / 2)
+        self.setup_commands.add(
+            self.templates["setup_trigger"].format(
+                OUTPUT=1,
+                TABLE=self.params["axis_to_scan"],
+                TRIGPOINT=trigger_point
+            )
+        )
+
+        self.setup_commands.add(self.templates["rest"].format(**self.params))
+
+    def prepare_start_commands(self):
+        """Prepare the commands that will start the scan"""
+
+        self.start_commands.clear()
+        self.start_commands.add("WGO {TABLE:d} 257".format(TABLE=self.params["axis_to_scan"]))

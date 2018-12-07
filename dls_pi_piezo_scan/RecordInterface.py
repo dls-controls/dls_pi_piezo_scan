@@ -2,6 +2,8 @@ from pkg_resources import require
 require('epicsdbbuilder==1.0')
 from softioc import builder
 
+from PIConstants import *
+
 def create_records(configure_scan_function,
                    start_scan_function,
                    min_x, min_y, min_z, max_x, max_y, max_z):
@@ -34,10 +36,11 @@ def create_records(configure_scan_function,
                                             initial_value=0,
                                             PINI='YES',
                                             NOBT=2,
-                                            ZRVL=0, ZRST='Not configured', ZRSV="INVALID",
-                                            ONVL=1, ONST='Preparing', ONSV="MINOR",
-                                            TWVL=2, TWST='Error', TWSV="MAJOR",
-                                            THVL=3, THST='Ready', THSV="NO_ALARM",
+                                            ZRVL=STATE_NOT_CONFIGRED, ZRST='Not configured', ZRSV="INVALID",
+                                            ONVL=STATE_PREPARING, ONST='Preparing', ONSV="MINOR",
+                                            TWVL=STATE_ERROR, TWST='Error', TWSV="MAJOR",
+                                            THVL=STATE_READY, THST='Ready', THSV="NO_ALARM",
+                                            FRVL=STATE_SCAN_RUNNING, FRST="Scan running", FRSV="NO_ALARM"
                                             )
     # Number of steps in x
     records["NX"] = builder.longOut("NX",
